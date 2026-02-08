@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SDOF Step (Undamped)</title>
+  
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    background: #fff;
+    color: #000;
+  }
+
+  /* Keep constants and sliders in single rows */
+  #constants, #controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: nowrap; /* keep all beside each other */
+    gap: 40px;         /* horizontal spacing between inputs */
+    margin: 10px 0;
+  }
+
+  .constant, .control {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  input[type="number"], input[type="range"] {
+    width: 160px;
+  }
+
+  input[type="number"] {
+    text-align: center;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 4px;
+  }
+
+  canvas {
+    max-width: 800px;
+    width: 100%;
+    height: 400px;
+    margin: 10px auto;
+    display: block;
+    background: #fff;
+  }
+</style>
+
+</head>
+<body>
+  <!-- Constants -->
+  <div id="constants">
+    <div class="constant">
+      <label for="p0" style="font-size: 14px;">Step force <i> p₀ </i> (N)</label>
+      <input type="number" id="p0" value="1" step="0.1" min="0" max="1.2">
+    </div>
+    <div class="constant">
+      <label for="k" style="font-size: 14px;">Stiffness <i> k </i> (N/m)</label>
+      <input type="number" id="k" value="1" step="0.1" min="0.5">
+    </div>
+    <div class="constant">
+      <label for="m" style="font-size: 14px;">Mass <i> m </i>  (kg)</label>
+      <input type="number" id="m" value="1" step="0.1" min="0.1">
+    </div>
+  </div>
+
+  <!-- Initial conditions -->
+  <div id="controls">
+    <div class="control" style="text-align:center; margin:auto;">
+      <label for="u0" style="font-size: 14px;">Initial displacement <br> <i>u₀ </i> (m)= <span id="u0_val">0.00</span></label>
+      <input type="range" id="u0" min="-1" max="1" step="0.01" value="0">
+    </div>
+    <div class="control" style="text-align:center; margin:auto;">
+      <label for="ud0" style="font-size: 14px;">Initial velocity <br> <i> u̇₀ </i> (m/s) = <span id="ud0_val">0.00</span></label>
+      <input type="range" id="ud0" min="-2" max="2" step="0.01" value="0">
+    </div>
+  </div>
+
+  <canvas id="plot"></canvas>
+
+  <script>
+    Chart.defaults.devicePixelRatio = 2;
+    Chart.defaults.font.size = 14;
+
+    const canvas = document.getElementById("plot");
+    const ctx = canvas.getContext("2d");
+
+    // Parameters
+    let m = 1, k = 1, p0 = 1;
+    const T = 20, dt = 0.01;
+
+    // Compute u(t)
+    function computeSeries(u0, ud0) {
+      const wn = Math.sqrt(k / m);
+      const pts = [];
+      for (let i = 0; i <= T / dt; i++) {
+        const t = i * dt;
+        // u(t) = (p0/k)(1 - cos(wn t)) + u0 cos(wn t) + (ud0/wn) sin(wn t)
+        const u = (p0 / k) * (1 - Math.cos(wn * t))
+                + u0 * Math.cos(wn * t)
+                + (ud0 / wn) * Math.sin(wn * t);
+        pts.push({ x: t, y: u });
+      }
+      return pts;
+    }
+
+    // Static displacement line y = p0/k
+    function staticLine() {
+      const y = p0 / k;
+      return [{ x: 0, y }, { x: T, y }];
+    }
+
+    // Custom plugin: draw black axes through (0,0)
+    const axesLines = {
+      id: 'axesLines',
+      afterDraw(chart) {
+        const { ctx, chartArea: { left, right, top, bottom }, scales: { x, y } } = chart;
+        ctx.save();
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 1.5;
+        // x-axis (u = 0)
+        const yZero = y.getPixelForValue(0);
+        if (yZero >= top && yZero <= bottom) {
+          ctx.beginPath(); ctx.moveTo(left, yZero); ctx.lineTo(right, yZero); ctx.stroke();
+        }
+        // y-axis (t = 0)
+        const xZero = x.getPixelForValue(0);
+        if (xZero >= left && xZero <= right) {
+          ctx.beginPath(); ctx.moveTo(xZero, top); ctx.lineTo(xZero, bottom); ctx.stroke();
+        }
+        ctx.restore();
+      }
+    };
+
+    // Chart
+    const chart = new Chart(ctx, {
+      type: "line",
+      data: {
+        datasets: [
+          { label: "𝑢(t)",
+            data: computeSeries(0, 0),
+            borderColor: "red",
+            borderWidth: 1.5,
+            pointRadius: 0,
+            fill: false,
+            parsing: false
+          },
+          { label: "𝑝₀/𝑘 (static)",
+            data: staticLine(),
+            borderColor: "#000",
+            borderWidth: 1,
+            borderDash: [6, 6],
+            pointRadius: 0,
+            fill: false,
+            parsing: false
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        animation: false,
+        scales: {
+          x: {
+            type: "linear",
+            min: 0, max: 20,
+            ticks: {
+              color: "black",
+              stepSize: 1,
+              callback: v => Number.isInteger(v) ? v : ""
+            },
+            grid: { color: "#eee", drawBorder: false },
+            title: { display: true, text: "Time 𝑡 (s)", color: "black" }
+          },
+          y: {
+            min: -2, max: 4,
+            ticks: { color: "black" },
+            grid: { color: "#eee", drawBorder: false },
+            title: { display: true, text: "Displacement 𝑢(t) (m)", color: "black" }
+          }
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top',
+            labels: { color: 'black', usePointStyle: false, boxWidth: 50 , boxHeight : 1}
+          }
+        },
+        layout: { padding: 10 }
+      }
+    });
+
+    // Update on any input
+    function updatePlot() {
+      const u0  = parseFloat(document.getElementById("u0").value);
+      const ud0 = parseFloat(document.getElementById("ud0").value);
+      document.getElementById("u0_val").textContent  = u0.toFixed(2);
+      document.getElementById("ud0_val").textContent = ud0.toFixed(2);
+
+      m  = parseFloat(document.getElementById("m").value);
+      k  = parseFloat(document.getElementById("k").value);
+      p0 = parseFloat(document.getElementById("p0").value);
+
+      chart.data.datasets[0].data = computeSeries(u0, ud0);
+      chart.data.datasets[1].data = staticLine();
+      chart.update();
+    }
+
+    document.querySelectorAll("input").forEach(el => el.addEventListener("input", updatePlot));
+    Chart.defaults.devicePixelRatio = 2;
+    Chart.defaults.font.size = 14;  // or 16, 18, etc.
+
+  </script>
+</body>
+</html>

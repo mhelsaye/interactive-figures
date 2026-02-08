@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SDOF Steady-State Harmonic Response (Amplitude & Phase)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #fff;
+      color: #000;
+    }
+
+    /* Layout Containers */
+    #controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: nowrap;
+      gap: 30px;
+      margin: 10px 0;
+      padding: 15px;
+      background-color: #f4f4f4;
+      border-radius: 8px;
+    }
+
+    .control {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* Inputs */
+    input[type="range"] { width: 150px; cursor: pointer; }
+    input[type="number"] {
+      text-align: center;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 4px;
+      width: 60px;
+    }
+
+    /* Labels */
+    label { font-size: 14px; margin-bottom: 5px; text-align: center; }
+    span.val { font-weight: bold; font-family: monospace; color: #333; }
+
+    canvas {
+      max-width: 900px;
+      width: 100%;
+      height: 450px;
+      margin: 20px auto;
+      display: block;
+      background: #fff;
+      border: 1px solid #eee;
+    }
+  </style>
+</head>
+<body>
+
+  <h2 style="text-align: center;">Steady-State Harmonic Response: Amplitude Ratio & Phase Lag</h2>
+
+  <div id="controls">
+
+    <div class="control">
+      <label for="rRatio">Freq. Ratio <i>&omega;/&omega;<sub>n</sub></i>: <span id="val_r" class="val">0.50</span></label>
+      <input type="range" id="rRatio" min="0.2" max="3.0" step="0.05" value="0.50">
+    </div>
+
+    <div class="control">
+      <label for="zeta">Damping <i>&zeta;</i>: <span id="val_zeta" class="val">0.20</span></label>
+      <input type="range" id="zeta" min="0.00" max="0.80" step="0.01" value="0.20">
+    </div>
+
+    <div class="control">
+      <label for="tMax">Duration (<i>t/T</i> max):</label>
+      <input type="number" id="tMax" value="3" step="1" min="2" max="10">
+    </div>
+
+  </div>
+
+  <canvas id="plot"></canvas>
+
+  <script>
+    // --- Setup ---
+    Chart.defaults.devicePixelRatio = 2;
+    Chart.defaults.font.size = 14;
+
+    const ctx = document.getElementById("plot").getContext("2d");
+
+    // Normalize forcing frequency to 2π so forcing period T = 1
+    const OMEGA_FORCE = 2 * Math.PI;
+
+    // --- Physics: steady-state ONLY ---
+    // Static reference: u_st/(u_st)0 = sin(ωt)
+    // Steady-state response: u/(u_st)0 = Rd sin(ωt - φ)
+    function computeSteadyState(r, zeta, maxT) {
+      const ptsDynamic = [];
+      const ptsStatic  = [];
+      const dt = 0.0025;
+
+      // Amplitude ratio (magnification factor)
+      const denom = Math.sqrt(Math.pow(1 - r * r, 2) + Math.pow(2 * zeta * r, 2));
+      const Rd = 1 / (denom < 1e-10 ? 1e-10 : denom);
+
+      // Phase lag (0..π for displacement typically; we keep 0..2π to match earlier code)
+      let phi = Math.atan2(2 * zeta * r, 1 - r * r);
+      if (phi < 0) phi += 2 * Math.PI;
+
+      for (let t = 0; t <= maxT; t += dt) {
+        const u_st = Math.sin(OMEGA_FORCE * t);
+        const u_ss = Rd * Math.sin(OMEGA_FORCE * t - phi);
+
+        ptsStatic.push({ x: t, y: u_st });
+        ptsDynamic.push({ x: t, y: u_ss });
+      }
+
+      return { dynamic: ptsDynamic, static: ptsStatic, Rd, phi };
+    }
+
+    // --- Helper for arrowheads ---
+    function drawArrowhead(ctx, x, y, dir) {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - dir * 6, y - 4);
+      ctx.lineTo(x - dir * 6, y + 4);
+      ctx.closePath();
+      ctx.fill();
+    }
+    function drawArrowheadVertical(ctx, x, y, dir) {
+      // dir = -1 points up, dir = +1 points down
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - 4, y - dir * 6);
+      ctx.lineTo(x + 4, y - dir * 6);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // --- Custom Plugin: Annotations (Zero line, φ/2π, Rd) ---
+    const annotationPlugin = {
+      id: 'annotationPlugin',
+      afterDatasetsDraw(chart) {
+        const { ctx, chartArea: { top, bottom, left, right }, scales: { x, y } } = chart;
+
+        // Draw solid zero line (y=0)
+        const yZero = y.getPixelForValue(0);
+        if (yZero >= top && yZero <= bottom) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(left, yZero);
+          ctx.lineTo(right, yZero);
+          ctx.strokeStyle = 'black';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([]);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        const phys = chart.config.physicsData;
+        if (!phys) return;
+
+        // Choose an integer n so the force peak is visible and not too close to edges
+        // Force peaks for sin(2πt) occur at t = 0.25 + n
+        const xMax = x.max;
+        let n = Math.max(0, Math.floor(xMax - 0.8)); // keep it near the right side
+        let tForcePeak = 0.25 + n;
+        if (tForcePeak > xMax - 0.3) tForcePeak -= 1.0; // ensure it fits
+
+        // Time shift (lag) in cycles because ω = 2π => Δt = φ/ω = φ/(2π)
+        const dT = phys.phi / (2 * Math.PI);
+        const tRespPeak = tForcePeak + dT;
+
+        const xForce = x.getPixelForValue(tForcePeak);
+        const xResp  = x.getPixelForValue(tRespPeak);
+
+        // Phase lines drawn below axis
+        ctx.save();
+        ctx.strokeStyle = '#333';
+        ctx.fillStyle = '#333';
+        ctx.lineWidth = 1.5;
+        ctx.font = '14px Arial';
+
+        // Drop lines
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(xForce, yZero);
+        ctx.lineTo(xForce, yZero + 42);
+        ctx.moveTo(xResp, yZero);
+        ctx.lineTo(xResp, yZero + 42);
+        ctx.stroke();
+
+        // Horizontal arrow between peaks
+        const arrowY = yZero + 32;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(xForce, arrowY);
+        ctx.lineTo(xResp, arrowY);
+        ctx.stroke();
+
+        // Arrowheads
+        drawArrowhead(ctx, xForce, arrowY, -1);
+        drawArrowhead(ctx, xResp,  arrowY,  1);
+
+        // Label
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(`φ/2π = ${dT.toFixed(3)}`, (xForce + xResp) / 2, arrowY + 10);
+
+        // --- Amplitude Ratio Rd ---
+        // At force peak, static amplitude = 1 (since u_st = sin(2πt))
+        // Dynamic amplitude = Rd
+        const yStaticPeakPix  = y.getPixelForValue(1);
+        const yDynamicPeakPix = y.getPixelForValue(phys.Rd);
+
+        // Draw a vertical arrow showing Rd (from 0 to Rd) near response peak
+        // To mimic the textbook, measure from 0 to Rd at the response peak x-position
+        const xMeasure = xResp;
+
+        ctx.strokeStyle = '#333';
+        ctx.fillStyle = '#333';
+        ctx.lineWidth = 1.5;
+
+        // Vertical line from y=0 to y=Rd
+        const y0Pix = y.getPixelForValue(0);
+        ctx.beginPath();
+        ctx.moveTo(xMeasure, y0Pix);
+        ctx.lineTo(xMeasure, yDynamicPeakPix);
+        ctx.stroke();
+
+        // Arrowhead at top
+        drawArrowheadVertical(ctx, xMeasure, yDynamicPeakPix, -1);
+
+        // Label Rd
+        ctx.fillStyle = 'black';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`Rd = ${phys.Rd.toFixed(2)}`, xMeasure + 10, yDynamicPeakPix);
+
+        ctx.restore();
+      }
+    };
+
+    // --- Chart Initialization ---
+    const chart = new Chart(ctx, {
+      type: "line",
+      data: {
+        datasets: [
+          {
+            label: "Static: u_st(t)/(u_st)₀ = sin(ωt)",
+            data: [],
+            borderColor: "black",
+            borderDash: [6, 6],
+            borderWidth: 2,
+            pointRadius: 0,
+            parsing: false
+          },
+          {
+            label: "Dynamic (steady-state): u(t)/(u_st)₀",
+            data: [],
+            borderColor: "#1f77b4",
+            borderWidth: 2.5,
+            pointRadius: 0,
+            parsing: false
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        animation: false,
+        scales: {
+          x: {
+            type: "linear",
+            min: 0,
+            max: 3,
+            title: { display: true, text: "t / T", color: "black", font: { weight: 'bold', size: 14 } },
+            ticks: { color: "black" },
+            grid: { color: "#eee" },
+            border: { display: true, color: "black", width: 1.5 }
+          },
+          y: {
+            suggestedMin: -3,
+            suggestedMax: 3,
+            title: { display: true, text: "u(t) / (u_st)₀", color: "black", font: { weight: 'bold', size: 14 } },
+            ticks: { color: "black" },
+            grid: { color: "#eee" },
+            border: { display: true, color: "black", width: 1.5 }
+          }
+        },
+        plugins: {
+          legend: {
+            labels: { color: 'black', usePointStyle: true }
+          }
+        },
+        layout: { padding: 10 }
+      },
+      plugins: [annotationPlugin]
+    });
+
+    // --- Interaction ---
+    function updatePlot() {
+      const r = parseFloat(document.getElementById("rRatio").value);
+      const zeta = parseFloat(document.getElementById("zeta").value);
+      const tMax = parseFloat(document.getElementById("tMax").value);
+
+      document.getElementById("val_r").textContent = r.toFixed(2);
+      document.getElementById("val_zeta").textContent = zeta.toFixed(2);
+
+      const data = computeSteadyState(r, zeta, tMax);
+      chart.config.physicsData = data;
+
+      chart.options.scales.x.max = tMax;
+      chart.data.datasets[0].data = data.static;
+      chart.data.datasets[1].data = data.dynamic;
+
+      chart.update();
+    }
+
+    document.querySelectorAll("input").forEach(el => el.addEventListener("input", updatePlot));
+    updatePlot();
+  </script>
+</body>
+</html>

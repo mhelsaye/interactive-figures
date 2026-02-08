@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Undamped SDOF Response (Harmonic Excitation)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #fff;
+      color: #000;
+    }
+
+    /* Keep constants and sliders in single rows */
+    #constants, #controls, #info {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: nowrap;
+      gap: 40px;
+      margin: 10px 0;
+    }
+
+    .constant, .control {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    input[type="number"], input[type="range"] {
+      width: 160px;
+    }
+
+    input[type="number"] {
+      text-align: center;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 4px;
+    }
+
+    canvas {
+      max-width: 800px;
+      width: 100%;
+      height: 400px;
+      margin: 10px auto;
+      display: block;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div id="constants">
+    <div class="constant">
+      <label for="tMax" style="font-size: 14px;">Duration (Periods <i>T</i>)</label>
+      <input type="number" id="tMax" value="2.5" step="1" min=".5" max="5">
+    </div>
+    <div class="constant">
+      <label style="font-size: 14px;">Amp. Factor <i>|R|</i></label>
+      <input type="text" id="ampFactor" value="5.26" disabled style="background:#f9f9f9; color:#333; font-weight:bold;">
+    </div>
+  </div>
+
+  <div id="controls">
+    <div class="control" style="text-align:center; margin:auto;">
+      <label for="rRatio" style="font-size: 14px;">
+        Frequency Ratio<br>
+        <i> r = ω/ωₙ </i> = <span id="r_val">0.90</span>
+      </label>
+      <input type="range" id="rRatio" min="0.2" max="1.8" step="0.01" value="0.350">
+    </div>
+  </div>
+
+  <canvas id="plot"></canvas>
+
+  <script>
+    // Sharper lines & larger fonts (from reference style)
+    Chart.defaults.devicePixelRatio = 2;
+    Chart.defaults.font.size = 14;
+
+    const canvas = document.getElementById("plot");
+    const ctx = canvas.getContext("2d");
+
+    // Constants for simulation
+    // We normalize forcing frequency omega = 2*PI so Period T = 1.
+    // Therefore time t corresponds directly to t/T.
+    const OMEGA_FORCE = 2 * Math.PI;
+
+    // Physics Engine: Undamped Harmonic Response
+    // Returns arrays for Total Response and Steady State
+    function computeResponses(r, maxPeriods) {
+        const ptsTotal = [];
+        const ptsSteady = [];
+        
+        // Sampling parameters
+        const dt = 0.01; 
+        
+        // Calculate natural frequency based on r = w / wn  => wn = w / r
+        const omega_n = OMEGA_FORCE / r;
+
+        // Amplitude Factor R = 1 / (1 - r^2)
+        // Handle singularity near r=1
+        let denominator = 1 - r * r;
+        // Clamp denominator to avoid infinity in plotting
+        if (Math.abs(denominator) < 1e-3) {
+            denominator = 1e-3 * (denominator >= 0 ? 1 : -1);
+        }
+        const R = 1 / denominator;
+
+        for (let i = 0; i <= maxPeriods / dt; i++) {
+            const t = i * dt; // t is effectively t/T because T=1
+
+            // Steady state: u_ss = R * sin(w * t)
+            const u_ss = R * Math.sin(OMEGA_FORCE * t);
+
+            // Total response (Initial cond: u=0, v=0)
+            // u_tot = R * sin(w * t) - R * r * sin(wn * t)
+            const u_tot = u_ss - (R * r * Math.sin(omega_n * t));
+
+            ptsTotal.push({ x: t, y: u_tot });
+            ptsSteady.push({ x: t, y: u_ss });
+        }
+
+        return { total: ptsTotal, steady: ptsSteady, R_val: Math.abs(R) };
+    }
+
+    // Custom plugin: draw black axes through (0,0) (Exact copy from reference)
+    const axesLines = {
+      id: 'axesLines',
+      afterDraw(chart) {
+        const { ctx, chartArea: { left, right, top, bottom }, scales: { x, y } } = chart;
+        ctx.save();
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 1.5;
+
+        // x-axis (u = 0)
+        const yZero = y.getPixelForValue(0);
+        if (yZero >= top && yZero <= bottom) {
+          ctx.beginPath();
+          ctx.moveTo(left, yZero);
+          ctx.lineTo(right, yZero);
+          ctx.stroke();
+        }
+
+        // y-axis (t = 0)
+        const xZero = x.getPixelForValue(0);
+        if (xZero >= left && xZero <= right) {
+          ctx.beginPath();
+          ctx.moveTo(xZero, top);
+          ctx.lineTo(xZero, bottom);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+    };
+
+    // Chart initialization
+    const chart = new Chart(ctx, {
+      type: "line",
+      data: {
+        datasets: [
+          {
+            label: "Total response",
+            data: [], // Set in updatePlot
+            borderColor: "red", // red as per original request
+            borderWidth: 1.5,
+            pointRadius: 0,
+            fill: false,
+            parsing: false
+          },
+          {
+            label: "Steady-state",
+            data: [], // Set in updatePlot
+            borderColor: "black",
+            borderWidth: 1.5,
+            borderDash: [6, 6], // Dashed line
+            pointRadius: 0,
+            fill: false,
+            parsing: false
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        animation: false,
+        scales: {
+          x: {
+            type: "linear",
+            min: 0, 
+            // Max will be dynamic based on input
+            ticks: {
+              color: "black",
+              stepSize: 1,
+              callback: v => Number.isInteger(v) ? v : ""
+            },
+            grid: { color: "#eee", drawBorder: false },
+            title: { display: true, text: "Normalized Time (t/T)", color: "black", font: { size: 16 } }
+          },
+          y: {
+            min: -6, max: 6, // Fixed range to show growth, but not infinite
+            ticks: { color: "black" },
+            grid: { color: "#eee", drawBorder: false },
+            title: { display: true, text: "Normalized Displacement u(t)/ust", color: "black", font: { size: 16 } }
+          }
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top',
+            labels: {
+              color: 'black',
+              usePointStyle: false,
+              boxWidth: 40,
+              boxHeight: 0
+            }
+          }
+        },
+        layout: { padding: 10 }
+      },
+      plugins: [axesLines]
+    });
+
+    // Update function
+    function updatePlot() {
+      const r = parseFloat(document.getElementById("rRatio").value);
+      const tMax = parseFloat(document.getElementById("tMax").value);
+
+      // Update Labels
+      document.getElementById("r_val").textContent = r.toFixed(2);
+      
+      // Update Chart Scales
+      chart.options.scales.x.max = tMax;
+
+      // Compute Data
+      const data = computeResponses(r, tMax);
+
+      // Update Info Display
+      let rText = data.R_val.toFixed(2);
+      if(data.R_val > 50) rText = "> 50";
+      document.getElementById("ampFactor").value = rText;
+
+      // Update Datasets
+      chart.data.datasets[0].data = data.total;
+      chart.data.datasets[1].data = data.steady;
+
+      chart.update();
+    }
+
+    // Attach listeners
+    document.querySelectorAll("input").forEach(el =>
+      el.addEventListener("input", updatePlot)
+    );
+
+    // Initial load
+    updatePlot();
+  </script>
+</body>
+</html>

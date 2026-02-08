@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Phase Angle Frequency Response</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #fff;
+      color: #000;
+    }
+
+    /* Layout Containers */
+    #controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: nowrap;
+      gap: 40px;
+      margin: 10px 0;
+      padding: 10px;
+      background-color: #f9f9f9;
+      border-radius: 8px;
+    }
+
+    .control {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* Input Styling */
+    input[type="range"] {
+      width: 180px;
+      cursor: pointer;
+    }
+
+    /* Labels */
+    label {
+      font-size: 14px;
+      margin-bottom: 5px;
+      text-align: center;
+    }
+
+    /* Value Display */
+    span.val {
+      font-weight: bold;
+      font-family: monospace;
+    }
+
+    canvas {
+      max-width: 800px;
+      width: 100%;
+      height: 400px;
+      margin: 20px auto;
+      display: block;
+      background: #fff;
+      border: 1px solid #eee;
+    }
+    
+    .legend-indicator {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        margin-right: 5px;
+        border-radius: 50%;
+    }
+  </style>
+</head>
+<body>
+
+  <h2 style="text-align: center; margin-bottom: 5px;">Phase Angle Frequency Response</h2>
+  <div style="text-align: center; color: #666; font-size: 0.9em; margin-bottom: 20px;">
+    Comparison of Phase Lag <i>&phi;</i> for two damping ratios
+  </div>
+
+  <div id="controls">
+    <div class="control">
+      <label for="zeta1">
+        <span class="legend-indicator" style="background: blue;"></span>
+        Damping Ratio 1 (<i>&zeta;<sub>1</sub></i>): <span id="val_z1" class="val">0.10</span>
+      </label>
+      <input type="range" id="zeta1" min="0.01" max="1.0" step="0.01" value="0.10">
+    </div>
+
+    <div class="control">
+      <label for="zeta2">
+        <span class="legend-indicator" style="background: red;"></span>
+        Damping Ratio 2 (<i>&zeta;<sub>2</sub></i>): <span id="val_z2" class="val">0.70</span>
+      </label>
+      <input type="range" id="zeta2" min="0.01" max="1.0" step="0.01" value="0.70">
+    </div>
+  </div>
+
+  <canvas id="plot"></canvas>
+
+  <script>
+    // --- Configuration & Style ---
+    Chart.defaults.devicePixelRatio = 2;
+    Chart.defaults.font.size = 14;
+
+    const canvas = document.getElementById("plot");
+    const ctx = canvas.getContext("2d");
+
+    // --- Physics Math ---
+    // Calculate Phase Angle phi in degrees
+    // phi = atan2( 2*zeta*r, 1 - r^2 )
+    function getPhase(r, zeta) {
+      const numerator = 2 * zeta * r;
+      const denominator = 1 - (r * r);
+      
+      // Math.atan2 returns radians in range (-PI, PI]
+      const phiRadians = Math.atan2(numerator, denominator);
+      
+      // Convert to degrees
+      let phiDegrees = phiRadians * (180 / Math.PI);
+      
+      // Standardize range to [0, 180] 
+      // atan2 returns negative values for angles > 180 in some contexts, 
+      // but physically for this system, phase goes 0 -> 180.
+      if (phiDegrees < 0) phiDegrees += 360;
+
+      return phiDegrees;
+    }
+
+    // Generate data points for a curve
+    function generateCurve(zeta) {
+      const data = [];
+      // Plot from r=0 to r=3.0 (matching your image)
+      for (let r = 0; r <= 3.0; r += 0.02) {
+        data.push({ x: r, y: getPhase(r, zeta) });
+      }
+      return data;
+    }
+
+    // --- Custom Plugin: Textbook Grid Lines ---
+    const textbookGrid = {
+      id: 'textbookGrid',
+      beforeDraw(chart) {
+        const { ctx, chartArea: { left, right, top, bottom }, scales: { x, y } } = chart;
+        ctx.save();
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 1.5;         // Set your desired thickness here
+        ctx.setLineDash([6, 6]);     // Dashed pattern
+
+        // --- Fix for "Double" Lines: Snap to nearest pixel ---
+        
+        // Vertical Line at r = 1
+        // We use Math.round(...) to snap it to a crisp pixel
+        const xRes = Math.round(x.getPixelForValue(1)); 
+        
+        if (xRes >= left && xRes <= right) {
+          ctx.beginPath();
+          ctx.moveTo(xRes, top);
+          ctx.lineTo(xRes, bottom);
+          ctx.stroke();
+        }
+
+        // Horizontal Line at phi = 90
+        const y90 = Math.round(y.getPixelForValue(90));
+        
+        if (y90 >= top && y90 <= bottom) {
+          ctx.beginPath();
+          ctx.moveTo(left, y90);
+          ctx.lineTo(right, y90);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+    };
+
+    // --- Chart Initialization ---
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            label: 'Curve 1',
+            data: [],
+            borderColor: 'blue',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.1 
+          },
+          {
+            label: 'Curve 2',
+            data: [],
+            borderColor: 'red',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.1
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        animation: false, 
+        interaction: {
+          mode: 'nearest',
+          intersect: false
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            min: 0,
+            max: 3,
+            // Using Unicode for chart labels works fine in JS strings
+            title: { display: true, text: 'Frequency Ratio ω/ωₙ', font: {size: 16, weight: 'bold'}, color: 'black' },
+            ticks: { color: 'black' },
+            grid: { 
+              color: '#eee',
+              tickColor: 'black',   
+            },
+            border: {
+              display: true,
+              color: 'black',
+              width: 1
+            }
+          },
+          y: {
+            min: 0,
+            max: 180,
+            title: { display: true, text: 'Phase Angle φ (degrees)', font: {size: 16, weight: 'bold'}, color: 'black' },
+            ticks: { 
+              stepSize: 45, // Show 0, 45, 90, 135, 180
+              color: 'black'
+            },
+            grid: { 
+              color: '#eee',
+              tickColor: 'black',
+            },
+            border: {
+              display: true,
+              color: 'black',
+              width: 1
+            }}
+        },
+        plugins: {
+          legend: { display: false } 
+        }
+      },
+      plugins: [textbookGrid]
+    });
+
+    // --- Update Logic ---
+    function updatePlot() {
+      // Read Sliders
+      const z1 = parseFloat(document.getElementById('zeta1').value);
+      const z2 = parseFloat(document.getElementById('zeta2').value);
+
+      // Update Text Displays
+      document.getElementById('val_z1').textContent = z1.toFixed(2);
+      document.getElementById('val_z2').textContent = z2.toFixed(2);
+
+      // Update Chart Data
+      chart.data.datasets[0].data = generateCurve(z1);
+      chart.data.datasets[1].data = generateCurve(z2);
+
+      chart.update();
+    }
+
+    // --- Event Listeners ---
+    document.getElementById('zeta1').addEventListener('input', updatePlot);
+    document.getElementById('zeta2').addEventListener('input', updatePlot);
+
+    // Initial Draw
+    updatePlot();
+
+  </script>
+</body>
+</html>
