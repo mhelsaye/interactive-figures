@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Steady-State Response (Red Dynamic Line)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background: #fff; color: #000; }
+    
+    #controls {
+      display: flex; justify-content: center; align-items: center; gap: 30px;
+      margin: 10px 0; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #ddd;
+    }
+    .control { display: flex; flex-direction: column; align-items: center; }
+    
+    input[type="range"] { width: 150px; cursor: pointer; }
+    input[type="number"] { width: 60px; text-align: center; padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
+    
+    label { font-size: 14px; margin-bottom: 5px; text-align: center; color: #333; }
+    span.val { font-weight: bold; font-family: monospace; color: black; } /* Changed span color to red to match plot */
+    
+    canvas {
+      max-width: 900px; width: 100%; height: 450px;
+      margin: 20px auto; display: block;
+      background: #fff; border: 1px solid #eee;
+    }
+  </style>
+</head>
+<body>
+
+  <div style="text-align: center; font-size: 0.9em; color: #555; margin-bottom: 20px;">
+  </div>
+  
+  <div id="controls">
+    <div class="control">
+      <label for="rRatio">Freq. Ratio <i> &omega;/&omega;<sub>n</sub></i>: <span id="val_r" class="val">0.50</span></label>
+      <input type="range" id="rRatio" min="0.2" max="3.0" step="0.05" value="0.50">
+    </div>
+
+    <div class="control">
+      <label for="zeta">Damping <i>&zeta;</i>: <span id="val_zeta" class="val">0.20</span></label>
+      <input type="range" id="zeta" min="0.01" max="1.0" step="0.01" value="0.20">
+    </div>
+
+    <div class="control">
+      <label for="tMax">Duration (T):</label>
+      <input type="number" id="tMax" value="4" step="1" min="3" max="10">
+    </div>
+  </div>
+
+  <canvas id="plot"></canvas>
+
+  <script>
+    Chart.defaults.devicePixelRatio = 2;
+    Chart.defaults.font.family = "'Segoe UI', sans-serif";
+    Chart.defaults.font.size = 14;
+
+    const canvas = document.getElementById("plot");
+    const ctx = canvas.getContext("2d");
+
+    // Constants
+    const OMEGA_FORCE = 2 * Math.PI; // Normalizes Period T = 1.0s
+
+    // --- PHYSICS ENGINE (Steady State Only) ---
+    function computeResponse(r, zeta, maxT) {
+        const ptsResponse = [];
+        const ptsStatic = [];
+        const dt = 0.005; 
+
+        // 1. Calculate Steady-State Parameters
+        const denom = Math.sqrt(Math.pow(1 - r*r, 2) + Math.pow(2 * zeta * r, 2));
+        const Rd = 1 / denom;
+        
+        let phi = Math.atan2(2 * zeta * r, 1 - r * r);
+        if (phi < 0) phi += 2 * Math.PI; 
+
+        // 2. Generate Time History (Pure Steady State)
+        for (let t = 0; t <= maxT; t += dt) {
+            // Static Deflection
+            const u_st = Math.sin(OMEGA_FORCE * t);
+
+            // Steady State Response
+            const u_ss = Rd * Math.sin(OMEGA_FORCE * t - phi);
+
+            ptsResponse.push({ x: t, y: u_ss });
+            ptsStatic.push({ x: t, y: u_st });
+        }
+
+        return { 
+            response: ptsResponse, 
+            static: ptsStatic,
+            Rd: Rd,
+            phi: phi
+        };
+    }
+
+    // --- ANNOTATION PAINTER ---
+    const annotationPlugin = {
+      id: 'annotationPlugin',
+      afterDatasetsDraw(chart) {
+        const { ctx, chartArea: { top, bottom, left, right }, scales: { x, y } } = chart;
+        const phys = chart.config.physicsData;
+        if (!phys) return;
+
+        // Draw Zero Line
+        const yZero = y.getPixelForValue(0);
+        if (yZero >= top && yZero <= bottom) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(left, yZero);
+            ctx.lineTo(right, yZero);
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // --- Calculate Peak Locations ---
+        const cycleIndex = 1; // Use 2nd cycle
+        const tForcePeak = cycleIndex + 0.25;
+        const lagTime = phys.phi / (2 * Math.PI);
+        const tRespPeak = tForcePeak + lagTime;
+
+        const xForce = x.getPixelForValue(tForcePeak);
+        const xResp = x.getPixelForValue(tRespPeak);
+
+        ctx.save();
+        ctx.lineWidth = 1.5;
+        ctx.font = "14px 'Segoe UI', Arial";
+        ctx.strokeStyle = '#444';
+        ctx.fillStyle = '#444';
+
+        // 1. Draw Phase Lag (Horizontal Arrow)
+        const arrowY = yZero + (y.getPixelForValue(-1) - yZero)/2; 
+
+        // Drop Lines
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(xForce, yZero); ctx.lineTo(xForce, arrowY + 5);
+        ctx.moveTo(xResp, yZero); ctx.lineTo(xResp, arrowY + 5);
+        ctx.stroke();
+
+        // Horizontal Arrow
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(xForce, arrowY); ctx.lineTo(xResp, arrowY);
+        ctx.stroke();
+        drawArrowhead(ctx, xForce, arrowY, -1);
+        drawArrowhead(ctx, xResp, arrowY, 1);
+
+        // Phase Label
+        ctx.textAlign = 'center';
+        const phaseVal = lagTime.toFixed(3);
+        ctx.fillText(`φ/2π = ${phaseVal}`, (xForce + xResp)/2, arrowY + 20);
+
+
+        // 2. Draw Amplitude Rd (Vertical Arrow)
+        // Draw from the zero line up to the response peak
+        const yPeakVal = phys.Rd;
+        const yPeakPix = y.getPixelForValue(yPeakVal);
+
+        if (yPeakPix > top) {
+            const xMeasure = xResp; 
+            
+            ctx.beginPath();
+            ctx.moveTo(xMeasure, yZero);
+            ctx.lineTo(xMeasure, yPeakPix);
+            // COLOR CHANGE: Changed to Black (#333)
+            ctx.strokeStyle = '#333'; 
+            ctx.stroke();
+            
+            // Arrowhead
+            ctx.fillStyle = '#333'; // COLOR CHANGE: Black arrowhead
+            drawArrowheadVertical(ctx, xMeasure, yPeakPix, -1);
+
+            // Label
+            ctx.font = "bold 14px 'Segoe UI', Arial";
+            ctx.fillStyle = '#000'; // COLOR CHANGE: Black text
+            ctx.fillText(`Rd = ${phys.Rd.toFixed(2)}`, xMeasure, yPeakPix - 12);
+        }
+
+        ctx.restore();
+      }
+    };
+
+    function drawArrowhead(ctx, x, y, dir) {
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - dir * 5, y - 4); ctx.lineTo(x - dir * 5, y + 4); ctx.fill();
+    }
+    function drawArrowheadVertical(ctx, x, y, dir) {
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 4, y - dir * 6); ctx.lineTo(x + 4, y - dir * 6); ctx.fill();
+    }
+
+    // --- CHART CONFIG ---
+    const chart = new Chart(ctx, {
+      type: "line",
+      data: {
+        datasets: [
+          {
+            label: "Static: ust(t)/(ust)o", 
+            data: [],
+            borderColor: "rgba(0,0,0,0.8)",
+            borderDash: [6, 4],
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.4
+          },
+          {
+            label: "Dynamic: u(t)/(ust)o",
+            data: [],
+            borderColor: "red",
+            borderWidth: 2.5,
+            pointRadius: 0,
+            tension: 0.4
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        animation: false,
+        interaction: { mode: 'nearest', intersect: false },
+        scales: {
+          x: {
+            type: "linear",
+            min: 0,
+            title: { display: true, text: " t / T", font: { weight: 'bold' }, color: '#333' },
+            ticks: { color: "#333" },
+            grid: { borderColor: "#333" }
+          },
+          y: {
+            suggestedMin: -2.5, suggestedMax: 2.5,
+            title: { display: true, text: "ust(t)/(ust)o", font: { weight: 'bold' }, color: '#333' },
+            ticks: { color: "#333" },
+            grid: { borderColor: "#333" }
+          }
+        },
+        plugins: {
+          legend: { labels: { usePointStyle: true, color: '#333' }, position: 'top' },
+          tooltip: { enabled: false }
+        }
+      },
+      plugins: [annotationPlugin]
+    });
+
+    // --- INTERACTION ---
+    function updatePlot() {
+      const r = parseFloat(document.getElementById("rRatio").value);
+      const zeta = parseFloat(document.getElementById("zeta").value);
+      const tMax = parseFloat(document.getElementById("tMax").value);
+
+      document.getElementById("val_r").textContent = r.toFixed(2);
+      document.getElementById("val_zeta").textContent = zeta.toFixed(2);
+
+      const data = computeResponse(r, zeta, tMax);
+      chart.config.physicsData = data;
+      chart.options.scales.x.max = tMax;
+      chart.data.datasets[0].data = data.static;
+      chart.data.datasets[1].data = data.response;
+      chart.update();
+    }
+
+    document.querySelectorAll("input").forEach(el => el.addEventListener("input", updatePlot));
+    updatePlot();
+  </script>
+</body>
+</html>
