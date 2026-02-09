@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Damped SDOF Response (Harmonic Excitation)</title>
+  <title>Damped SDOF Response (Component Visualization)</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body {
@@ -13,7 +13,7 @@
     }
 
     /* Flex container for rows */
-    #constants, #controls {
+    #constants, #controls, #toggles {
       display: flex;
       justify-content: center;
       align-items: center;
@@ -51,6 +51,16 @@
       font-weight: bold;
     }
 
+    /* Checkbox styling */
+    .toggle-label {
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      user-select: none;
+    }
+
     canvas {
       max-width: 800px;
       width: 100%;
@@ -65,7 +75,7 @@
   <div id="constants">
     <div class="constant">
       <label for="tMax" style="font-size: 14px;">Duration (Periods <i>T</i>)</label>
-      <input type="number" id="tMax" value="7" step="1" min="0.5" max="10">
+      <input type="number" id="tMax" value="7" step="1" min="0.5" max="15">
     </div>
     <div class="constant">
       <label style="font-size: 14px;">Magnification <i>|H|</i></label>
@@ -83,7 +93,7 @@
         Frequency Ratio<br>
         <i> r = ω/ωₙ </i> = <span id="r_val">0.90</span>
       </label>
-      <input type="range" id="rRatio" min="0.2" max="2.0" step="0.01" value="0.350">
+      <input type="range" id="rRatio" min="0.2" max="2.0" step="0.01" value="0.67">
     </div>
 
     <div class="control">
@@ -93,6 +103,21 @@
       </label>
       <input type="range" id="zeta" min="0.0" max="0.8" step="0.01" value="0.05">
     </div>
+  </div>
+
+  <div id="toggles">
+    <label class="toggle-label">
+      <input type="checkbox" id="showTotal" checked>
+      <span style="color: red; font-weight: bold;">— Total</span>
+    </label>
+    <label class="toggle-label">
+      <input type="checkbox" id="showSteady" checked>
+      <span style="color: black; font-weight: bold;">- - Steady State</span>
+    </label>
+    <label class="toggle-label">
+      <input type="checkbox" id="showTransient">
+      <span style="color: blue; font-weight: bold;">··· Transient</span>
+    </label>
   </div>
 
   <canvas id="plot"></canvas>
@@ -114,33 +139,23 @@
     function computeDampedResponse(r, zeta, maxPeriods) {
         const ptsTotal = [];
         const ptsSteady = [];
+        const ptsTransient = []; // NEW: Store transient separately
         const dt = 0.01; 
 
         // 1. System Properties
-        // r = w / wn  => wn = w / r
         const omega_n = OMEGA_FORCE / r;
         
-        // Damped natural frequency: wd = wn * sqrt(1 - z^2)
-        // We assume underdamped (zeta < 1) for this visualization.
+        // Damped natural frequency
         const safeZeta = Math.min(zeta, 0.99); 
         const omega_d = omega_n * Math.sqrt(1 - safeZeta * safeZeta);
 
-        // 2. Steady State Parameters (Particular Solution)
-        // Magnification Factor M = 1 / sqrt( (1-r^2)^2 + (2*z*r)^2 )
+        // 2. Steady State Parameters
         const denomSquared = Math.pow(1 - r*r, 2) + Math.pow(2 * safeZeta * r, 2);
-        // Avoid division by zero at perfect resonance with 0 damping
         let M = (denomSquared < 1e-6) ? 50 : 1 / Math.sqrt(denomSquared);
-        
-        // Phase angle phi = atan2( 2*z*r, 1-r^2 )
         const phi = Math.atan2(2 * safeZeta * r, 1 - r * r);
 
-        // 3. Transient Parameters (Homogeneous Solution)
-        // u_total(0) = 0  => A - M*sin(phi) = 0 => A = M*sin(phi)
-        // v_total(0) = 0  => derived B...
-        
+        // 3. Transient Parameters (Initial Conditions: u=0, v=0)
         const A = M * Math.sin(phi);
-        
-        // B derived from v(0)=0: B = (zeta*wn*A - w*M*cos(phi)) / wd
         const numeratorB = (safeZeta * omega_n * A) - (OMEGA_FORCE * M * Math.cos(phi));
         const B = numeratorB / omega_d;
 
@@ -160,13 +175,15 @@
 
             ptsTotal.push({ x: t, y: u_tot });
             ptsSteady.push({ x: t, y: u_ss });
+            ptsTransient.push({ x: t, y: u_tr });
         }
 
         return { 
             total: ptsTotal, 
             steady: ptsSteady, 
+            transient: ptsTransient,
             mag: M, 
-            phase: phi * (180/Math.PI) // Convert to degrees
+            phase: phi * (180/Math.PI) 
         };
     }
 
@@ -176,8 +193,8 @@
       afterDraw(chart) {
         const { ctx, chartArea: { left, right, top, bottom }, scales: { x, y } } = chart;
         ctx.save();
-        ctx.strokeStyle = 'black';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#666';
+        ctx.lineWidth = 1;
 
         // x-axis (y=0)
         const yZero = y.getPixelForValue(0);
@@ -209,10 +226,10 @@
             label: "Total Response",
             data: [], 
             borderColor: "red",
-            borderWidth: 1.5,
+            borderWidth: 2,
             pointRadius: 0,
             fill: false,
-            parsing: false
+            order: 1
           },
           {
             label: "Steady-state",
@@ -222,13 +239,25 @@
             borderDash: [6, 6],
             pointRadius: 0,
             fill: false,
-            parsing: false
+            order: 2
+          },
+          {
+            label: "Transient",
+            data: [],
+            borderColor: "blue",
+            borderWidth: 1.5,
+            borderDash: [2, 4],
+            pointRadius: 0,
+            fill: false,
+            hidden: true, // Hidden by default
+            order: 3
           }
         ]
       },
       options: {
         responsive: true,
         animation: false,
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
         scales: {
           x: {
             type: "linear",
@@ -238,27 +267,19 @@
               stepSize: 1,
               callback: v => Number.isInteger(v) ? v : ""
             },
-            grid: { color: "#eee", drawBorder: false },
+            grid: { color: "#f0f0f0", drawBorder: false },
             title: { display: true, text: "Normalized Time (t/T)", color: "black", font: { size: 16 } }
           },
           y: {
             min: -6, max: 6, 
             ticks: { color: "black" },
-            grid: { color: "#eee", drawBorder: false },
+            grid: { color: "#f0f0f0", drawBorder: false },
             title: { display: true, text: "Displacement u(t)/ust", color: "black", font: { size: 16 } }
           }
         },
         plugins: {
-          legend: {
-            display: true,
-            position: 'top',
-            labels: {
-              color: 'black',
-              usePointStyle: false,
-              boxWidth: 40,
-              boxHeight: 0
-            }
-          }
+          legend: { display: false }, // We use custom checkboxes
+          tooltip: { enabled: true }
         },
         layout: { padding: 10 }
       },
@@ -291,6 +312,12 @@
       // Push Data to Chart
       chart.data.datasets[0].data = data.total;
       chart.data.datasets[1].data = data.steady;
+      chart.data.datasets[2].data = data.transient;
+
+      // Update Visibility based on checkboxes
+      chart.getDatasetMeta(0).hidden = !document.getElementById("showTotal").checked;
+      chart.getDatasetMeta(1).hidden = !document.getElementById("showSteady").checked;
+      chart.getDatasetMeta(2).hidden = !document.getElementById("showTransient").checked;
 
       chart.update();
     }
